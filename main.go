@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/hex"
+	"fmt"
 	"github.com/sstallion/go-hid"
 	"log"
+	"strings"
 )
 
 func main() {
@@ -31,7 +33,7 @@ func main() {
 
 		message := readMessage(dev)
 		if message != nil {
-			log.Printf("message: %s", hex.EncodeToString(message))
+			log.Printf("message: %s -> %s", hex.EncodeToString(message), parseMessage(message))
 		}
 	}
 }
@@ -64,4 +66,56 @@ func readMessage(dev *hid.Device) []byte {
 		}
 	}
 	return nil
+}
+
+type Mode int
+
+const (
+	Mode_VAC Mode = iota
+	Mode_mVAC
+	Mode_VDC
+	Mode_mVDC
+	Mode_Hz
+	Mode_Percent
+	Mode_Ohm
+	Mode_Continuity
+	Mode_Diode
+	Mode_F
+	Mode_0x0A
+	Mode_0x0B
+	Mode_uADC
+	Mode_uAAC
+	Mode_mADC
+	Mode_mAAC
+	Mode_ADC
+	Mode_AAC
+	Mode_hFE
+	Mode_0x13
+	Mode_NCV
+)
+
+func (m Mode) String() string {
+	str := []string{"V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm", "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC", "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV"}
+	if int(m) < len(str) {
+		return str[m]
+	} else {
+		return "-"
+	}
+}
+
+type Message struct {
+	Mode Mode
+}
+
+func (m Message) String() string {
+	var str strings.Builder
+	fmt.Fprintf(&str, "Mode:%s", m.Mode)
+	return str.String()
+}
+
+func parseMessage(d []byte) *Message {
+	var m Message
+	m.Mode = Mode(d[1])
+
+	return &m
 }
