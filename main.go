@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/sstallion/go-hid"
 	"log"
+	"math"
+
 	//	"math"
 	"strings"
 
@@ -109,10 +111,11 @@ const (
 	Mode_0x16
 	Mode_0x17
 	Mode_LPF
+	Mode_VAC_VDC
 )
 
 func (m Mode) String() string {
-	str := []string{"V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm", "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC", "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV", "0x15", "0x16", "0x17", "LPF"}
+	str := []string{"V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm", "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC", "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV", "0x15", "0x16", "0x17", "LPF", "VAC_VDC"}
 	if int(m) < len(str) {
 		return str[m]
 	} else {
@@ -123,7 +126,7 @@ func (m Mode) String() string {
 type Message struct {
 	Mode  Mode
 	Range byte
-	Value float32
+	Value float64
 }
 
 func (m Message) String() string {
@@ -135,7 +138,7 @@ func (m Message) String() string {
 func parseMessage(d []byte) *Message {
 	var m Message
 	m.Mode = Mode(d[1])
-	m.Range = d[2]
+	m.Range = d[2] & 0x0F
 
 	fmt.Print("\033[?25l")
 
@@ -163,13 +166,46 @@ func parseMessage(d []byte) *Message {
 			fmt.Printf("%2d ", d[i]&0x0F)
 		}
 	}
-	fmt.Print("\033[1A")
-	fmt.Print("\r")
 
-	//var digits []byte
-	//for i, b := range d {
-	//	digits = append()
-	//}
+	fmt.Print("\n")
+
+	var val int64
+	comma := -1
+	for i := 4; i < 10; i++ {
+		if d[i] == 0x2e {
+			comma = i
+		} else {
+			val *= 10
+			val += int64(d[i] & 0x0F)
+		}
+	}
+
+	var sign int64
+	if d[14]&0x0F == 1 {
+		sign = -1
+	} else {
+		sign = 1
+	}
+
+	factor := 1
+	if d[comma+1] == 0x4F && d[comma+2] == 0x4C {
+		m.Value = math.Inf(1)
+	} else {
+		if m.Range > 0 && m.Range <= 3 {
+			factor = 1000
+		}
+		if m.Range > 3 && m.Range <= 6 {
+			factor = 1000000
+		}
+		//if m.Mode != Mode_Ohm {
+		//	factor /= 1000
+		//}
+		m.Value = float64(sign*val) / math.Pow10(9-comma) * float64(factor)
+	}
+
+	fmt.Printf("                                                            \r")
+	fmt.Printf("range = %d, factor = %d, val = %f %s", m.Range, factor, m.Value, m.Mode.String())
+	fmt.Print("\r\033[2A")
 
 	// fmt.Printf("%d%d%d%d\n", d[5]&0x0F, d[7]&0x0F, d[8]&0x0F, d[9]&0x0F)
 
