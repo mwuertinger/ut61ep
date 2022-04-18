@@ -1,14 +1,22 @@
 package main
 
 import (
-	"encoding/hex"
+	//	"encoding/binary"
 	"fmt"
 	"github.com/sstallion/go-hid"
 	"log"
+	//	"math"
 	"strings"
+
+	"github.com/fatih/color"
 )
 
 func main() {
+	// show cursor
+	defer func() {
+		fmt.Print("\033[?25h")
+	}()
+
 	dev, err := hid.OpenFirst(0x10c4, 0xEA80)
 	if err != nil {
 		log.Fatalf("open device: %v", err)
@@ -33,7 +41,12 @@ func main() {
 
 		message := readMessage(dev)
 		if message != nil {
-			log.Printf("message: %s -> %s", hex.EncodeToString(message), parseMessage(message))
+			var hexMessage strings.Builder
+			for _, val := range message {
+				fmt.Fprintf(&hexMessage, "%02x ", val)
+			}
+			parseMessage(message)
+			// log.Printf("message: %s ->  %s", hexMessage.String(), parseMessage(message))
 		}
 	}
 }
@@ -92,30 +105,90 @@ const (
 	Mode_hFE
 	Mode_0x13
 	Mode_NCV
+	Mode_0x15
+	Mode_0x16
+	Mode_0x17
+	Mode_LPF
 )
 
 func (m Mode) String() string {
-	str := []string{"V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm", "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC", "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV"}
+	str := []string{"V AC", "mV AC", "V DC", "mV DC", "Hz", "Percent", "Ohm", "Continuity", "Diode", "F", "0x0A", "0x0B", "uA DC", "uA AC", "mA DC", "mA AC", "A DC", "A AC", "hFE", "0x13", "NCV", "0x15", "0x16", "0x17", "LPF"}
 	if int(m) < len(str) {
 		return str[m]
 	} else {
-		return "-"
+		return fmt.Sprintf("0x%02x", int(m))
 	}
 }
 
 type Message struct {
-	Mode Mode
+	Mode  Mode
+	Range byte
+	Value float32
 }
 
 func (m Message) String() string {
 	var str strings.Builder
-	fmt.Fprintf(&str, "Mode:%s", m.Mode)
+	fmt.Fprintf(&str, "Mode:%s Range:%d", m.Mode, m.Range)
 	return str.String()
 }
 
 func parseMessage(d []byte) *Message {
 	var m Message
 	m.Mode = Mode(d[1])
+	m.Range = d[2]
+
+	fmt.Print("\033[?25l")
+
+	for i := range d {
+		if i == 2 {
+			color.New(color.FgGreen).Printf("%02x ", d[i])
+		} else if i >= 4 && i <= 9 {
+			color.New(color.FgYellow).Printf("%02x ", d[i])
+		} else {
+			fmt.Printf("%02x ", d[i])
+		}
+	}
+	fmt.Print("\n")
+
+	for i := 0; i < len(d); i++ {
+		if i == 2 {
+			color.New(color.FgGreen).Printf("%2d ", d[i]&0x0F)
+		} else if i >= 4 && i <= 9 {
+			if d[i] == 0x2e {
+				color.New(color.FgYellow).Print(" , ")
+			} else {
+				color.New(color.FgYellow).Printf("%2d ", d[i]&0x0F)
+			}
+		} else {
+			fmt.Printf("%2d ", d[i]&0x0F)
+		}
+	}
+	fmt.Print("\033[1A")
+	fmt.Print("\r")
+
+	//var digits []byte
+	//for i, b := range d {
+	//	digits = append()
+	//}
+
+	// fmt.Printf("%d%d%d%d\n", d[5]&0x0F, d[7]&0x0F, d[8]&0x0F, d[9]&0x0F)
+
+	// fmt.Printf("length=%d\n", len(d))
+
+	//	for i := 3; i < len(d)-3-4; i++ {
+	//		bits := binary.BigEndian.Uint32(d[i : i+4])
+	//		val := math.Float32frombits(bits)
+	//		fmt.Printf("float[%d]=%f ", i, val)
+	//		fmt.Printf("  int[%d]=%d ", i, bits)
+	//	}
+	//	fmt.Println()
+	//for i := 3; i < len(d)-3-8; i++ {
+	//	bits := binary.BigEndian.Uint64(d[i : i+8])
+	//	val := math.Float64frombits(bits)
+	//	fmt.Printf("val[%d]=%f ", i, val)
+	//	// fmt.Printf("val[%d]=%d ", i, bits)
+	//}
+	//fmt.Println()
 
 	return &m
 }
