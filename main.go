@@ -4,6 +4,7 @@ import (
 	//	"encoding/binary"
 	"fmt"
 	"github.com/sstallion/go-hid"
+	"io"
 	"log"
 	"math"
 
@@ -41,7 +42,11 @@ func main() {
 			log.Fatalf("start: %v", err)
 		}
 
-		message := readMessage(dev)
+		message, err := readMessage(dev)
+		if err != nil {
+			log.Printf("readMessage: %v", err)
+			continue
+		}
 		if message != nil {
 			var hexMessage strings.Builder
 			for _, val := range message {
@@ -53,21 +58,20 @@ func main() {
 	}
 }
 
-func readMessage(dev *hid.Device) []byte {
+func readMessage(dev io.Reader) ([]byte, error) {
 	buf := make([]byte, 2)
 	var message []byte
-	for i := 0; i < 100; i++ {
+	for i := 0; ; i++ {
 		_, err := dev.Read(buf)
 		if err != nil {
-			log.Printf("read: %v", err)
+			return nil, fmt.Errorf("read: %v", err)
 		}
 		if buf[0] != 1 {
-			log.Printf("unexpected message:  %02x %02x", buf[0], buf[1])
+			return nil, fmt.Errorf("unexpected message:  %02x %02x", buf[0], buf[1])
 		}
 		val := buf[1]
 		if (i == 0 && val != 0xab) || (i == 1 && val != 0xcd) {
-			log.Printf("invalid header, skipping message")
-			return nil
+			return nil, fmt.Errorf("invalid header, skipping message: i=%d, val=%02x", i, val)
 		}
 		if i == 2 {
 			length := int(val)
@@ -77,13 +81,12 @@ func readMessage(dev *hid.Device) []byte {
 			message[i-2] = val
 		}
 		if i == len(message)+2 {
-			return message
+			return message, nil
 		}
 	}
-	return nil
 }
 
-type Mode int
+type Mode uint
 
 const (
 	Mode_VAC Mode = iota
@@ -119,12 +122,34 @@ func (m Mode) String() string {
 	if int(m) < len(str) {
 		return str[m]
 	} else {
-		return fmt.Sprintf("0x%02x", int(m))
+		return fmt.Sprintf("0x%02x", uint(m))
+	}
+}
+
+type Unit uint
+
+const (
+	Unit_None Unit = iota
+	Unit_Volt
+	Unit_Ampere
+	Unit_Percent
+	Unit_Ohm
+	Unit_Hz
+	Unit_Farad
+)
+
+func (u Unit) String() string {
+	str := []string{"", "V", "A", "%", "Ω", "Hz", "F"}
+	if int(u) < len(str) {
+		return str[u]
+	} else {
+		return fmt.Sprintf("0x%02x", uint(u))
 	}
 }
 
 type Message struct {
 	Mode  Mode
+	Unit  Unit
 	Range byte
 	Value float64
 }
@@ -135,7 +160,7 @@ func (m Message) String() string {
 	return str.String()
 }
 
-func parseMessage(d []byte) *Message {
+func parseMessage(d []byte) (*Message, error) {
 	var m Message
 	m.Mode = Mode(d[1])
 	m.Range = d[2] & 0x0F
@@ -147,6 +172,8 @@ func parseMessage(d []byte) *Message {
 			color.New(color.FgGreen).Printf("%02x ", d[i])
 		} else if i >= 4 && i <= 9 {
 			color.New(color.FgYellow).Printf("%02x ", d[i])
+		} else if i == 14 {
+			color.New(color.FgBlue).Printf("%02x ", d[i])
 		} else {
 			fmt.Printf("%02x ", d[i])
 		}
@@ -162,6 +189,8 @@ func parseMessage(d []byte) *Message {
 			} else {
 				color.New(color.FgYellow).Printf("%2d ", d[i]&0x0F)
 			}
+		} else if i == 14 {
+			color.New(color.FgBlue).Printf("%2d ", d[i]&0x0F)
 		} else {
 			fmt.Printf("%2d ", d[i]&0x0F)
 		}
@@ -172,7 +201,10 @@ func parseMessage(d []byte) *Message {
 	var val int64
 	comma := -1
 	for i := 4; i < 10; i++ {
-		if d[i] == 0x2e {
+		if d[i] == 0x4f && d[i+1] == 0x4c {
+			val = math.MaxInt64
+			break
+		} else if d[i] == 0x2e {
 			comma = i
 		} else {
 			val *= 10
@@ -181,50 +213,95 @@ func parseMessage(d []byte) *Message {
 	}
 
 	var sign int64
-	if d[14]&0x0F == 1 {
+	if d[14]&0x01 == 1 {
 		sign = -1
 	} else {
 		sign = 1
 	}
 
-	factor := 1
-	if d[comma+1] == 0x4F && d[comma+2] == 0x4C {
-		m.Value = math.Inf(1)
-	} else {
-		if m.Range > 0 && m.Range <= 3 {
-			factor = 1000
+	if m.Mode == Mode_VAC_VDC {
+		if d[14]&0x08 == 0x08 {
+			m.Mode = Mode_VAC
+		} else {
+			m.Mode = Mode_VDC
 		}
-		if m.Range > 3 && m.Range <= 6 {
-			factor = 1000000
-		}
-		//if m.Mode != Mode_Ohm {
-		//	factor /= 1000
-		//}
-		m.Value = float64(sign*val) / math.Pow10(9-comma) * float64(factor)
 	}
 
-	fmt.Printf("                                                            \r")
-	fmt.Printf("range = %d, factor = %d, val = %f %s", m.Range, factor, m.Value, m.Mode.String())
+	var factors []float64
+
+	switch m.Mode {
+	case Mode_VAC_VDC:
+		m.Unit = Unit_Volt
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+	case Mode_VAC:
+		m.Unit = Unit_Volt
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+	case Mode_mVAC:
+		m.Unit = Unit_Volt
+		factors = []float64{0.001, 0.001, 0.001, 0.001}
+	case Mode_VDC:
+		m.Unit = Unit_Volt
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+	case Mode_LPF:
+		m.Unit = Unit_Volt
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+	case Mode_mVDC:
+		factors = []float64{0.001, 0.001, 0.001, 0.001}
+		m.Unit = Unit_Volt
+	case Mode_Hz:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Hz
+	case Mode_Percent:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Percent
+	case Mode_Ohm:
+		factors = []float64{1.0, 1000.0, 1000.0, 1000.0, 1000000.0, 1000000.0, 1000000.0}
+		m.Unit = Unit_Ohm
+	case Mode_Continuity:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Ohm
+	case Mode_Diode:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Volt
+	case Mode_F:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Farad
+	case Mode_uADC:
+		factors = []float64{1.0 / 1000000.0, 1.0 / 1000000.0, 1.0 / 1000000.0, 1.0 / 1000000.0}
+		m.Unit = Unit_Ampere
+	case Mode_uAAC:
+		factors = []float64{1.0 / 1000000.0, 1.0 / 1000000.0, 1.0 / 1000000.0, 1.0 / 1000000.0}
+		m.Unit = Unit_Ampere
+	case Mode_mADC:
+		factors = []float64{0.001, 0.001, 0.001, 0.001}
+		m.Unit = Unit_Ampere
+	case Mode_mAAC:
+		factors = []float64{0.001, 0.001, 0.001, 0.001}
+		m.Unit = Unit_Ampere
+	case Mode_ADC:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Ampere
+	case Mode_AAC:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_Ampere
+	default:
+		factors = []float64{1.0, 1.0, 1.0, 1.0}
+		m.Unit = Unit_None
+	}
+
+	if int(m.Range) >= len(factors) {
+		return nil, fmt.Errorf("invalid range (%d) for mode (%s)", m.Range, m.Mode.String())
+	}
+	factor := factors[m.Range]
+	if val == math.MaxInt64 {
+		m.Value = math.Inf(1)
+	} else {
+		m.Value = float64(sign*val) / math.Pow10(9-comma) * factor
+	}
+
+	fmt.Printf("                                                                      \r")
+	fmt.Printf("range = %d, factor = %f, val = %.8f %s, mode = %s", m.Range, factor, m.Value, m.Unit.String(), m.Mode.String())
 	fmt.Print("\r\033[2A")
 
-	// fmt.Printf("%d%d%d%d\n", d[5]&0x0F, d[7]&0x0F, d[8]&0x0F, d[9]&0x0F)
-
-	// fmt.Printf("length=%d\n", len(d))
-
-	//	for i := 3; i < len(d)-3-4; i++ {
-	//		bits := binary.BigEndian.Uint32(d[i : i+4])
-	//		val := math.Float32frombits(bits)
-	//		fmt.Printf("float[%d]=%f ", i, val)
-	//		fmt.Printf("  int[%d]=%d ", i, bits)
-	//	}
-	//	fmt.Println()
-	//for i := 3; i < len(d)-3-8; i++ {
-	//	bits := binary.BigEndian.Uint64(d[i : i+8])
-	//	val := math.Float64frombits(bits)
-	//	fmt.Printf("val[%d]=%f ", i, val)
-	//	// fmt.Printf("val[%d]=%d ", i, bits)
-	//}
-	//fmt.Println()
-
-	return &m
+	return &m, nil
 }
