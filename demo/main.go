@@ -5,12 +5,18 @@ import (
 	"github.com/fatih/color"
 	"github.com/mwuertinger/ut61ep"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	// show cursor
-	defer func() {
-		fmt.Print("\033[?25h")
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		fmt.Print("\033[?25h\n")
+		os.Exit(0)
 	}()
 
 	dev, err := ut61ep.Open()
@@ -25,7 +31,7 @@ func main() {
 			continue
 		}
 
-		fmt.Print("\033[?25l")
+		fmt.Print("\033[?25l") // hide cursor
 
 		for i := range message.RawMessage {
 			if i == 2 {
@@ -56,10 +62,8 @@ func main() {
 			}
 		}
 
-		fmt.Print("\n")
-
-		fmt.Printf("                                                                      \r")
+		fmt.Print("\n                                                                      \r")
 		fmt.Printf("range = %d, val = %.8f %s, mode = %s", message.Range, message.Value, message.Unit.String(), message.Mode.String())
-		fmt.Print("\r\033[2A")
+		fmt.Print("\r\033[2A") // move cursor to beginning of line and up 2 lines
 	}
 }
