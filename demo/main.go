@@ -19,10 +19,12 @@ func main() {
 		os.Exit(0)
 	}()
 
-	dev, err := ut61ep.Open()
+	dev, err := ut61ep.Open("")
 	if err != nil {
 		log.Fatalf("open: %v", err)
 	}
+
+	fmt.Printf("serial=%s\n", dev.GetSerial())
 
 	for {
 		message, err := dev.ReadMessage()

@@ -9,6 +9,7 @@ import (
 )
 
 type Device interface {
+	GetSerial() string
 	ReadMessage() (*Message, error)
 }
 
@@ -93,10 +94,22 @@ const (
 	usb_pid = 0xEA80
 )
 
-func Open() (Device, error) {
-	dev, err := hid.OpenFirst(usb_vid, usb_pid)
+// Open the device with the specified serial number or the first device if serial number is empty.
+func Open(serial string) (Device, error) {
+	var dev *hid.Device
+	var err error
+	if serial == "" {
+		dev, err = hid.OpenFirst(usb_vid, usb_pid)
+	} else {
+		dev, err = hid.Open(usb_vid, usb_pid, serial)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open device: %v", err)
+	}
+
+	serial, err = dev.GetSerialNbr()
+	if err != nil {
+		return nil, fmt.Errorf("get serial: %v", err)
 	}
 
 	// See datasheet https://www.silabs.com/documents/public/application-notes/an434-cp2110-4-interface-specification.pdf
@@ -112,16 +125,21 @@ func Open() (Device, error) {
 		return nil, fmt.Errorf("uart config: %v", err)
 	}
 
-	return &device{dev}, nil
+	return &device{hid: dev, serial: serial}, nil
 }
 
 type device struct {
-	hid io.ReadWriter
+	hid    io.ReadWriter
+	serial string
 }
 
 var (
 	requestData = []byte{0x06, 0xab, 0xcd, 0x03, 0x5e, 0x01, 0xd9}
 )
+
+func (d *device) GetSerial() string {
+	return d.serial
+}
 
 func (d *device) ReadMessage() (*Message, error) {
 	// request data
@@ -132,7 +150,7 @@ func (d *device) ReadMessage() (*Message, error) {
 
 	buf := make([]byte, 2)
 	var message []byte
-	for i := 0; ; i++ {
+	for i := 0; len(message) == 0 || i <= len(message)+2; i++ {
 		_, err := d.hid.Read(buf)
 		if err != nil {
 			return nil, fmt.Errorf("read: %v", err)
@@ -151,10 +169,9 @@ func (d *device) ReadMessage() (*Message, error) {
 		if i > 2 && i < len(message)+2 {
 			message[i-2] = val
 		}
-		if i == len(message)+2 {
-			return parseMessage(message)
-		}
 	}
+
+	return parseMessage(message)
 }
 
 var factors = map[Mode][]float64{
