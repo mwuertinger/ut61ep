@@ -1,4 +1,4 @@
-# Uni-T UT61E+ USB Protocol
+# Uni-T UT61E+ USB Protocol Client
 
 The [Uni-T UT61E+](https://www.uni-trend.com/meters/html/product/NewProducts/UT61%20161%20Series/UT61E+.html)
 digital multimeter can be connected to a PC through the built-in CP2110 UART-USB bridge. This repository contains a
@@ -17,11 +17,6 @@ The library is also available for other operating systems but this is untested.
 
 ## Example
 ```golang
-import (
-    "log"
-    "github.com/mwuertinger/ut61ep"
-)
-
 dev, err := ut61ep.Open("")
 if err != nil {
     log.Fatalf("open: %v", err)
@@ -77,6 +72,6 @@ message length and the remainder is the actual data.
 
 For many of the bytes only the least significant 4-bits are relevant and the most significant 4-bits are 0x30.
 
-## Further Reading
+## References
 - This library was inspired by a [similar project](http://www.smartypies.com/projects/ut171a-data-reader-on-linux/) for a different Uni-T multimeter
 - [CP2110 datasheet](https://www.silabs.com/documents/public/application-notes/an434-cp2110-4-interface-specification.pdf)
